@@ -1,24 +1,41 @@
 package controllers
 
-import play.api.mvc._
-import play.api.libs.iteratee.{Iteratee, Concurrent, Enumerator}
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
-import scala.concurrent.duration.DurationInt
-import play.api.Logger
-import play.api.libs.concurrent.{Akka, Promise}
 import java.io.File
-import play.api.libs.ws.WS
-import akka.actor.{Props, Actor}
+
+import akka.actor.{Actor, Props}
 import akka.pattern.ask
-import java.util.concurrent.TimeoutException
+import play.api.Logger
 import play.api.Play.current
+import play.api.libs.concurrent.{Akka, Promise}
+import play.api.libs.iteratee.{Concurrent, Enumerator, Iteratee}
+import play.api.libs.ws.WS
+import play.api.mvc._
+
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.{Future, SyncVar}
+import scala.sys.process.{BasicIO, Process}
 
 object Application extends Controller {
+
+  val actor = Akka.system.actorOf(Props[WebsocketEchoActor])
+  val minecraftActor = Akka.system.actorOf(Props[MinecraftActor])
 
   // http endpoint to check that the server is running
   def index = Action {
     Ok("I'm alive!\n")
+  }
+
+  def startMinecraft = Action {
+    minecraftActor ! StartMinecraftServer()
+
+    Ok("ok")
+  }
+
+  def sendMinecraftCmd = Action {
+    minecraftActor ! SendMinecraftCommand("/help")
+
+    Ok("ok")
   }
 
   // endpoint that opens an echo websocket
@@ -102,11 +119,10 @@ object Application extends Controller {
     }
   }
 
-
   def wsWithActor = WebSocket.async[String] {
     request => {
       Logger.info("wsWithActor, client connected")
-      val actor = Akka.system.actorOf(Props[WebsocketEchoActor])
+
       (actor ? ClientConnected())(3 seconds).mapTo[(Iteratee[String, _], Enumerator[String])].recover {
         case e: TimeoutException =>
           // the actor didn't respond
@@ -114,6 +130,30 @@ object Application extends Controller {
           val out: Enumerator[String] = Enumerator.eof
           val in: Iteratee[String, Unit] = Iteratee.ignore
           (in, out)
+      }
+    }
+  }
+
+  case class StartMinecraftServer()
+
+  case class SendMinecraftCommand(cmd: String)
+
+  class MinecraftActor extends Actor {
+
+    val jarURL = "../minecraft_server.1.8.jar"
+    val file:File  = new File(jarURL)
+    val url = file.toURL()
+    val cl = new URLClassLoader(url)
+
+
+    val clazz = cl.loadClass("my.pkg.MyActor")
+
+    def receive = {
+      case StartMinecraftServer() => {
+        println("start minecraft server")
+      }
+      case SendMinecraftCommand(cmd) => {
+        println(s"cmd: ${cmd}")
       }
     }
   }
